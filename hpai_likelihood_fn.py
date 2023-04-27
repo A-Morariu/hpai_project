@@ -99,9 +99,8 @@ def generate_spatial_kernel(farm_distance_matrix):
         function: function taking in spatial pressure parameter based on 
     """
     def square_exponential_kernel(parameters):
-        return tf.math.exp(
-            - tf.math.square(tf.math.divide(farm_distance_matrix, parameters)
-                             ))
+        partial_step = tf.math.multiply(farm_distance_matrix, 1/parameters)
+        return tf.math.exp(tf.math.negative(tf.math.square(partial_step)))
     return square_exponential_kernel
 
 
@@ -123,14 +122,14 @@ def test_spatial_kernel():
     return fake_spatial_pressure_fn(fake_parameter)
 
 
-print(f'Spatial values {test_spatial_kernel()} - correct!')
+# #print(f'Spatial values {test_spatial_kernel()} - correct!')
 
 ##########################
 # Infectious pressure
 ##########################
 
 
-def generate_pairwise_hazard_fn(farm_characteristics_data, farm_distance_matrix):
+def generate_pairwise_hazard_fn(farm_distance_matrix, farm_characteristics_data=None):
     """_summary_
 
     Args:
@@ -144,16 +143,13 @@ def generate_pairwise_hazard_fn(farm_characteristics_data, farm_distance_matrix)
 
     def compute_hazard(parameters):
         # regression component - have a column of 1s in the data
-        print(parameters[:-1])
-        regression = tf.exp(tf.math.multiply(
-            farm_characteristics_data, parameters[:-1])
-        )
+        # Fill in later
 
         # spatial component - alreay exponentiated!
-        print(parameters[-1])
-        spatial = spatial_kernel(parameters[-1])
-
-        return regression + spatial
+        print(parameters)
+        spatial = spatial_kernel(parameters)
+        print(f'Spatial matrix dim: {tf.shape(spatial)}')
+        return spatial
 
     return compute_hazard
 
@@ -184,5 +180,5 @@ def test_hazard_fn():
     return fake_hazard_fn(fake_parameter)
 
 
-print(f'Hazard values {test_hazard_fn()} - !')
+# print(f'Hazard values {test_hazard_fn()} - !')
 ##########################
