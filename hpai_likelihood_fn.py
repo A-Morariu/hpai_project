@@ -125,6 +125,27 @@ def test_spatial_kernel():
 # #print(f'Spatial values {test_spatial_kernel()} - correct!')
 
 ##########################
+# Regression Component 
+##########################
+
+def generate_regression_pressure(farm_characteristics_data = None): 
+    """_summary_
+
+    Args:
+        farm_characteristics_data (_type_, optional): Factor variables for each farm unit. Defaults to None.
+
+    Returns:
+        tensor: exp(alpha + beta^T * data)
+    """
+    def compute_regression(parameters):
+        # regression does not include the intercept term 
+        regression = tf.math.multiply(farm_characteristics_data, parameters[1:])
+        expontiated_regression = tf.math.exp(parameters[0] + regression)
+        return expontiated_regression
+        
+     return compute_regression
+    
+##########################
 # Infectious pressure
 ##########################
 
@@ -140,7 +161,8 @@ def generate_pairwise_hazard_fn(farm_distance_matrix, farm_characteristics_data=
         fn: fn which outputs a tensor of pairwise hazard rates 
     """
     spatial_kernel = generate_spatial_kernel(farm_distance_matrix)
-
+    regression_kernel = generate_regression_pressure(farm_characteristics_data)
+    
     def compute_hazard(parameters):
         # regression component - have a column of 1s in the data
         # Fill in later
@@ -149,7 +171,9 @@ def generate_pairwise_hazard_fn(farm_distance_matrix, farm_characteristics_data=
         print(parameters)
         spatial = spatial_kernel(parameters)
         print(f'Spatial matrix dim: {tf.shape(spatial)}')
-        return spatial
+        
+        regression = regression_kernel(parameters)
+        return tf.math.add(spatial, regression)
 
     return compute_hazard
 
