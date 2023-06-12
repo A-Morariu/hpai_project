@@ -125,10 +125,10 @@ def test_spatial_kernel():
 # #print(f'Spatial values {test_spatial_kernel()} - correct!')
 
 ##########################
-# Regression Component 
+# Regression Component
 ##########################
 
-def generate_regression_pressure(farm_characteristics_data = None): 
+def generate_regression_pressure(farm_characteristics_data=None):
     """_summary_
 
     Args:
@@ -138,19 +138,20 @@ def generate_regression_pressure(farm_characteristics_data = None):
         tensor: exp(alpha + beta^T * data)
     """
     def compute_regression(parameters):
-        # regression does not include the intercept term 
+        # regression does not include the intercept term
         regression = tf.math.multiply(farm_characteristics_data, parameters[1:])
         expontiated_regression = tf.math.exp(parameters[0] + regression)
         return expontiated_regression
-        
-     return compute_regression
-    
+
+    return compute_regression
+
 ##########################
 # Infectious pressure
 ##########################
 
 
-def generate_pairwise_hazard_fn(farm_distance_matrix, farm_characteristics_data=None):
+def generate_pairwise_hazard_fn(
+        farm_distance_matrix, farm_characteristics_data=None):
     """_summary_
 
     Args:
@@ -162,7 +163,7 @@ def generate_pairwise_hazard_fn(farm_distance_matrix, farm_characteristics_data=
     """
     spatial_kernel = generate_spatial_kernel(farm_distance_matrix)
     regression_kernel = generate_regression_pressure(farm_characteristics_data)
-    
+
     def compute_hazard(parameters):
         # regression component - have a column of 1s in the data
         # Fill in later
@@ -171,7 +172,7 @@ def generate_pairwise_hazard_fn(farm_distance_matrix, farm_characteristics_data=
         print(parameters)
         spatial = spatial_kernel(parameters)
         print(f'Spatial matrix dim: {tf.shape(spatial)}')
-        
+
         regression = regression_kernel(parameters)
         return tf.math.add(spatial, regression)
 
@@ -199,7 +200,8 @@ def test_hazard_fn():
         [3.14, 0.1, 1.2, 0.5], dtype=DTYPE, name='fake parameters')
 
     fake_hazard_fn = generate_pairwise_hazard_fn(
-        farm_characteristics_data=fake_char, farm_distance_matrix=fake_distances)
+        farm_characteristics_data=fake_char,
+        farm_distance_matrix=fake_distances)
 
     return fake_hazard_fn(fake_parameter)
 
