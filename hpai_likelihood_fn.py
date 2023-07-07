@@ -122,13 +122,13 @@ def test_spatial_kernel():
     return fake_spatial_pressure_fn(fake_parameter)
 
 
-# #print(f'Spatial values {test_spatial_kernel()} - correct!')
+# print(f'Spatial values {test_spatial_kernel()} - correct!')
 
 ##########################
 # Regression Component
 ##########################
 
-def generate_regression_pressure(farm_characteristics_data=None):
+def generate_regression_pressure(farm_characteristics_data):
     """_summary_
 
     Args:
@@ -139,11 +139,31 @@ def generate_regression_pressure(farm_characteristics_data=None):
     """
     def compute_regression(parameters):
         # regression does not include the intercept term
-        regression = tf.math.multiply(farm_characteristics_data, parameters[1:])
-        expontiated_regression = tf.math.exp(parameters[0] + regression)
+        regression = tf.math.multiply(farm_characteristics_data, parameters)
+        expontiated_regression = tf.math.exp(regression)
         return expontiated_regression
 
     return compute_regression
+
+def test_regression_kernel(): 
+    """_summary_
+
+    Returns:
+        _type_: _description_
+    """
+    fake_char = tf.constant([[1, 2, 3],
+                             [1, 2, 3],
+                             [1, 2, 3]],
+                            dtype=DTYPE,
+                            name='fake data')
+    fake_parameter = tf.constant([0.1, 1.2, 0.5], 
+                                               dtype=DTYPE,
+                                               name='regression param')
+    fake_reg_kernel_fn = generate_regression_pressure(farm_characteristics_data=fake_char)
+    
+    return fake_reg_kernel_fn(fake_parameter)
+
+# print(f'Regression values {test_regression_kernel()} - correct!')
 
 ##########################
 # Infectious pressure
@@ -151,7 +171,7 @@ def generate_regression_pressure(farm_characteristics_data=None):
 
 
 def generate_pairwise_hazard_fn(
-        farm_distance_matrix, farm_characteristics_data=None):
+        farm_distance_matrix, farm_characteristics_data):
     """_summary_
 
     Args:
@@ -168,12 +188,11 @@ def generate_pairwise_hazard_fn(
         # regression component - have a column of 1s in the data
         # Fill in later
 
-        # spatial component - alreay exponentiated!
-        print(parameters)
-        spatial = spatial_kernel(parameters)
-        print(f'Spatial matrix dim: {tf.shape(spatial)}')
+        # spatial component - already exponentiated!
+        spatial = spatial_kernel(parameters.get('spatial_param'))
 
-        regression = regression_kernel(parameters)
+        regression = regression_kernel(parameters.get('reg_param'))
+
         return tf.math.add(spatial, regression)
 
     return compute_hazard
@@ -187,8 +206,8 @@ def test_hazard_fn():
     """
     # 3 farm population
     fake_char = tf.constant([[1, 2, 3],
-                             [1, 2, 3],
-                             [1, 2, 3]],
+                             [1, 4, 9],
+                             [1, 8, 27]],
                             dtype=DTYPE,
                             name='fake data')
     fake_distances = tf.constant([[0, 0.1, 1.5],
@@ -196,16 +215,23 @@ def test_hazard_fn():
                                   [1.5, 0.73, 0]],
                                  dtype=DTYPE,
                                  name='fake distances')
-    fake_parameter = tf.constant(
-        [3.14, 0.1, 1.2, 0.5], dtype=DTYPE, name='fake parameters')
+    fake_parameter_dict = {'spatial_param': tf.constant([3.14],
+                                                   dtype=DTYPE,
+                                                   name ='spatial param'),
+                      'reg_param': tf.constant([0.1, 1.2, 0.5], 
+                                               dtype=DTYPE,
+                                               name='regression param')}
 
     fake_hazard_fn = generate_pairwise_hazard_fn(
         farm_characteristics_data=fake_char,
         farm_distance_matrix=fake_distances)
 
-    return fake_hazard_fn(fake_parameter)
+    return fake_hazard_fn(fake_parameter_dict)
 
 
 # print(f'Hazard values {test_hazard_fn()} - !')
 ##########################
 
+##########################
+# Likelihood
+##########################
