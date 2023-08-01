@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import collections
 import scipy as sp
 
 import tensorflow as tf
@@ -9,9 +10,17 @@ import tensorflow_probability as tfp
 
 # Preamble
 
-DTYPE = np.float32
+# Aliasing
+DTYPE = tf.float64
 
 tfd = tfp.distributions
+
+tf_map = tf.nest.map_structure
+
+# User defined types
+ParameterTuple = collections.namedtuple(
+    'ParameterTuple', 'regression spatial removal')
+
 
 # Import data - To do
 farm_locations = pd.read_csv('data_files/farm_locations.csv')
@@ -21,7 +30,7 @@ farm_locations = pd.read_csv('data_files/farm_locations.csv')
 # Helper function
 
 
-def pairwise_distance(farm_locations_data):
+def pairwise_distance(location_data):
     """Compute pairwise distance matrix between farms
 
     Args:
@@ -32,9 +41,49 @@ def pairwise_distance(farm_locations_data):
                 Dim = len(farm_location_data)
     """
     return tf.convert_to_tensor(
-        sp.spatial.distance.pdist(farm_locations_data),
+        sp.spatial.distance.squareform(
+            sp.spatial.distance.pdist(location_data)
+        ),
         dtype=DTYPE
     )
+
+##########################
+# Spatial kernel
+##########################
+
+
+def generate_spatial_kernel(location_data):
+    """Closure which returns a specific spatial kernel
+
+    eg. square exponential, euclidean, etc
+
+    Args:
+        location_data (Tensor - float64): 2-D array of the location coordinates of (all) units in the population 
+
+    Returns:
+        Tensor - float64: fn which returns the spatial kernel 
+    """
+    # compute distances between farms (i.e. [rho(i,j)] )
+    farm_distance_matrix = pairwise_distance(location_data)
+    farm_distance_matrix = tf.convert_to_tensor(
+        farm_distance_matrix, dtype=DTYPE)
+
+    def square_exponential_kernel(parameters):
+        """Square exponential function - parameter phi places a loose cut off at phi units away from data point i 
+
+        Mathematically: k_{SE}(i,j) = exp(- ([rho(i,j)] / phi **2)
+
+        Args:
+            parameters (float64): numeric value for cut off in spatial process
+
+        Returns:
+            Tensor - float64: square matrix of the pairwise spatial pressure applied by unit j (colm) onto unit i (row)
+        """
+        parameters = tf.convert_to_tensor(parameters, DTYPE)
+        partial_step = tf.math.multiply(farm_distance_matrix, 1/parameters)
+        return tf.math.exp(-tf.math.square(partial_step))
+
+    return square_exponential_kernel
 
 
 def generate_waifw(infection_times, removal_times):
@@ -85,93 +134,38 @@ def generate_exposure(infection_times, removal_times):
     )
 
 ##########################
-# Spatial kernel
-##########################
-
-
-def generate_spatial_kernel(farm_distance_matrix):
-    """Compute the square exponential spatial kernel given a pairwise distance matrix
-
-    Args:
-        farm_distance_matrix (tensor): matrix of pairwise distance
-
-    Returns:
-        function: function taking in spatial pressure parameter based on 
-    """
-    def square_exponential_kernel(parameters):
-        partial_step = tf.math.multiply(farm_distance_matrix, 1/parameters)
-        return tf.math.exp(tf.math.negative(tf.math.square(partial_step)))
-    return square_exponential_kernel
-
-
-def test_spatial_kernel():
-    """Test case for spatial kernel
-
-    Returns:
-        _type_: _description_
-    """
-    fake_distances = tf.constant([[0, 0.1, 1.5],
-                                  [0.1, 0, 0.73],
-                                  [1.5, 0.73, 0]],
-                                 dtype=DTYPE,
-                                 name='fake distances')
-    fake_parameter = tf.constant([0.5], dtype=DTYPE, name='fake phi')
-
-    fake_spatial_pressure_fn = generate_spatial_kernel(fake_distances)
-
-    return fake_spatial_pressure_fn(fake_parameter)
-
-
-# print(f'Spatial values {test_spatial_kernel()} - correct!')
-
-##########################
 # Regression Component
 ##########################
 
-def generate_regression_pressure(farm_characteristics_data):
-    """_summary_
+
+def generate_regression_pressure(characteristic_data=None):
+    """Instantiate fn for regression component of model
 
     Args:
         farm_characteristics_data (_type_, optional): Factor variables for each farm unit. Defaults to None.
 
     Returns:
-        tensor: exp(alpha + beta^T * data)
+        fn: exp(alpha + beta * data)
     """
+    characteristic_data = tf.convert_to_tensor(characteristic_data, DTYPE)
+
     def compute_regression(parameters):
-        # regression does not include the intercept term
-        regression = tf.math.multiply(farm_characteristics_data, parameters)
-        expontiated_regression = tf.math.exp(regression)
+        parameters = tf.convert_to_tensor(parameters, DTYPE)
+        # note: char_data is a column vector so this needs to change for general case
+        one_padded_data = tf.stack([np.full(np.shape(characteristic_data), 1.0),
+                                    characteristic_data], axis=-1)
+        regression = tf.matmul(one_padded_data, tf.expand_dims(parameters, -1))
+        expontiated_regression = tf.math.exp(-regression)
         return expontiated_regression
 
     return compute_regression
-
-def test_regression_kernel(): 
-    """_summary_
-
-    Returns:
-        _type_: _description_
-    """
-    fake_char = tf.constant([[1, 2, 3],
-                             [1, 2, 3],
-                             [1, 2, 3]],
-                            dtype=DTYPE,
-                            name='fake data')
-    fake_parameter = tf.constant([0.1, 1.2, 0.5], 
-                                               dtype=DTYPE,
-                                               name='regression param')
-    fake_reg_kernel_fn = generate_regression_pressure(farm_characteristics_data=fake_char)
-    
-    return fake_reg_kernel_fn(fake_parameter)
-
-# print(f'Regression values {test_regression_kernel()} - correct!')
 
 ##########################
 # Infectious pressure
 ##########################
 
 
-def generate_pairwise_hazard_fn(
-        farm_distance_matrix, farm_characteristics_data):
+def generate_pairwise_hazard_fn(location_data, characteristic_data):
     """_summary_
 
     Args:
@@ -179,58 +173,55 @@ def generate_pairwise_hazard_fn(
         farm_locations_data (_type_): Northing-Easting coordinates of farms
 
     Returns:
-        fn: fn which outputs a tensor of pairwise hazard rates 
+        fn: fn which outputs a tensor of pairwise hazard rates
     """
-    spatial_kernel = generate_spatial_kernel(farm_distance_matrix)
-    regression_kernel = generate_regression_pressure(farm_characteristics_data)
+    spatial_kernel = generate_spatial_kernel(location_data)
+    regression_kernel = generate_regression_pressure(characteristic_data)
 
-    def compute_hazard(parameters):
-        # regression component - have a column of 1s in the data
-        # Fill in later
+    def compute_hazard(parameters_tuple):
 
         # spatial component - already exponentiated!
-        spatial = spatial_kernel(parameters.get('spatial_param'))
+        spatial = spatial_kernel(parameters_tuple.spatial)
 
-        regression = regression_kernel(parameters.get('reg_param'))
-
-        return tf.math.add(spatial, regression)
+        # regression component - already exponentiated!
+        regression = regression_kernel(parameters_tuple.regression)
+        return tf.math.multiply(spatial,
+                                regression
+                                )
 
     return compute_hazard
 
+############
+# Removal fn
+############
 
-def test_hazard_fn():
-    """Test case for hazard fn
+
+def generate_removal_fn(infection_time, removal_time):
+    """Instantiate fn governing the removal process. 
+    Close over computing the time difference (D)
+
+    Args:
+        infection_time (datetime): _description_
+        removal_time (datetime): _description_
 
     Returns:
-        _type_: _description_
+        fn: fn for the waiting time to the removal event
     """
-    # 3 farm population
-    fake_char = tf.constant([[1, 2, 3],
-                             [1, 4, 9],
-                             [1, 8, 27]],
-                            dtype=DTYPE,
-                            name='fake data')
-    fake_distances = tf.constant([[0, 0.1, 1.5],
-                                  [0.1, 0, 0.73],
-                                  [1.5, 0.73, 0]],
-                                 dtype=DTYPE,
-                                 name='fake distances')
-    fake_parameter_dict = {'spatial_param': tf.constant([3.14],
-                                                   dtype=DTYPE,
-                                                   name ='spatial param'),
-                      'reg_param': tf.constant([0.1, 1.2, 0.5], 
-                                               dtype=DTYPE,
-                                               name='regression param')}
+    time_diff = removal_time - infection_time
 
-    fake_hazard_fn = generate_pairwise_hazard_fn(
-        farm_characteristics_data=fake_char,
-        farm_distance_matrix=fake_distances)
+    def removal_fn(parameters):
+        """Exponential waiting time 
+        r_j - i_j ~ Exp(gamma)
 
-    return fake_hazard_fn(fake_parameter_dict)
+        Args:
+            parameters (float64): rate parameter of an exponential distribution 
 
-
-# print(f'Hazard values {test_hazard_fn()} - !')
-##########################
+        Returns:
+            float: log_prob of the differences
+        """
+        return tfp.distributions.Exponential(
+            rate=parameters).log_prob(time_diff)
+    return removal_fn
 
 ##########################
 # Likelihood
