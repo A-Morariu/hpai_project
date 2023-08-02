@@ -1,4 +1,6 @@
+"""Module providing access to creating namedtuple structures"""
 import collections
+
 import numpy as np
 import pandas as pd
 import scipy as sp
@@ -58,7 +60,8 @@ def generate_spatial_kernel(location_data):
     eg. square exponential, euclidean, etc
 
     Args:
-        location_data (Tensor - float64): 2-D array of the location coordinates of (all) units in the population 
+        location_data (Tensor - float64): 2-D array of the location 
+        coordinates of (all) units in the population 
 
     Returns:
         Tensor - float64: fn which returns the spatial kernel 
@@ -69,7 +72,8 @@ def generate_spatial_kernel(location_data):
         farm_distance_matrix, dtype=DTYPE)
 
     def square_exponential_kernel(parameters):
-        """Square exponential function - parameter phi places a loose cut off at phi units away from data point i 
+        """Square exponential function - parameter phi places a loose
+        cut off at phi units away from data point i 
 
         Mathematically: k_{SE}(i,j) = exp(- ([rho(i,j)] / phi **2)
 
@@ -77,7 +81,8 @@ def generate_spatial_kernel(location_data):
             parameters (float64): numeric value for cut off in spatial process
 
         Returns:
-            Tensor - float64: square matrix of the pairwise spatial pressure applied by unit j (colm) onto unit i (row)
+            Tensor - float64: square matrix of the pairwise spatial pressure 
+            applied by unit j (colm) onto unit i (row)
         """
         parameters = tf.convert_to_tensor(1/parameters, DTYPE)
         partial_step = tf.math.multiply(parameters, farm_distance_matrix)
@@ -144,7 +149,8 @@ def generate_infectious_duration(infection_times, removal_times):
         removal_times (datetime): vector of removal times
 
     Returns:
-        Tensor-float64: 1D tensor of infectious duration (period which an individual exerts infectious pressyre on other units in the system)
+        Tensor-float64: 1D tensor of infectious duration (period which 
+        an individual exerts infectious pressyre on other units in the system)
     """
     infection_times = tf.convert_to_tensor(infection_times, dtype=DTYPE)
     removal_times = tf.convert_to_tensor(removal_times, dtype=DTYPE)
@@ -160,7 +166,8 @@ def generate_regression_pressure(characteristic_data=None):
     """Instantiate fn for regression component of model
 
     Args:
-        farm_characteristics_data (_type_, optional): Factor variables for each farm unit. Defaults to None.
+        farm_characteristics_data (_type_, optional): Factor variables 
+        for each farm unit. Defaults to None.
 
     Returns:
         fn: exp(alpha + beta * data)
@@ -267,7 +274,8 @@ def event_rate_block(waifw_matrix, hazard_matrix):
         log_rates)  # remove np.inf (initial inf and occults)
     return tf.reduce_sum(log_rates)
 
-# This function hides the matrix multiplications within the log_ll computation - no need to write as a closure
+# This function hides the matrix multiplications within the
+# log_ll computation - no need to write as a closure
 
 # block 2 - infectious pressure p.w. approximation
 # math: ((E cdot H_{I,I} ) cdot 1v cdot 1v
@@ -286,15 +294,28 @@ def infectious_pressure_block(hazard_matrix, exposure_matrix):
     infection_pressure = tf.matmul(a=hazard_matrix, b=exposure_matrix)
     return tf.reduce_sum(infection_pressure)
 
-# This function hides the matrix multiplications within the log_ll computation - no need to write as a closure
+# function hides the matrix multiplications within the
+# log_ll computation - no need to write as a closure
 
 # block 3 - removal process
 # math: log_prob(D)
 
 
 def removal_process_block(known_event_times):
-    # these can be moved one level deeper into the closure if they
-    # are unknown (i.e. are model parameters)
+    """Closure over the known event times to evaluate the removal 
+    process log prob
+
+    Args:
+        known_event_times (datetime): array of known event times in 
+        an epidemic process 
+
+    Returns:
+        fn: fn which evaluates the log prob of the removal process 
+        given a rate
+    """
+
+    # Unknown event times can be moved one level deeper into the
+    # closure if they are unknown (i.e. are model parameters)
 
     infection_time = known_event_times['infection_time']
     removal_time = known_event_times['removal_time']
@@ -321,7 +342,18 @@ def removal_process_block(known_event_times):
 
 
 def log_ll(hazard_rate_function, known_event_times):
+    """Closure over the data for the likelihood function
+    of the model
 
+    Args:
+        hazard_rate_function (fn): pairwise hazard rate fn (closes 
+        over the same data as the log_ll)
+        known_event_times (datetime): array of known epidemic 
+        event times
+
+    Returns:
+        fn: fn which evaluates the log-likelihood of an epidemic model
+    """
     @tf.function(jit_compile=False)
     def log_ll_eval(parameters_tuple):
         # Compute matrices
@@ -368,10 +400,13 @@ def prior_distributions_block(initial_values_tuple):
     Returns:
 
     Args:
-        initial_values_tuple (ParameterTuple): namedtuple of initial parameter values. The shapes of these vectors are used to set up the structure for further prior distributiuon evaluations
+        initial_values_tuple (ParameterTuple): namedtuple of initial 
+        parameter values. The shapes of these vectors are used to set 
+        up the structure for further prior distributiuon evaluations
 
     Returns:
-        fn: fn with input current parameter values to evaluate the prior distribution
+        fn: fn with input current parameter values to evaluate the 
+        prior distribution
     """
 
     # Goal: priors to be initialized w/ arguments
@@ -414,6 +449,16 @@ def prior_distributions_block(initial_values_tuple):
 
 
 def target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
+    """Combine log-likelihood and prior distributions to create the 
+    target log prob fn used in inference
+
+    Args:
+        log_likelihood_fn (fn): log-likelihood fn of the model
+        prior_dist_fn (fn): prior distribution fn of the model parameters
+
+    Returns:
+        float64: evaluation of the target log prob
+    """
     # initialize the two parts
     def target_log_prob_eval(parameters_tuple):
         return log_likelihood_fn(parameters_tuple) + prior_dist_fn(parameters_tuple)
