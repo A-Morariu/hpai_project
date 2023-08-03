@@ -545,7 +545,7 @@ def random_walk_metropolis_hastings_baseline(
 
     # Instantiate the TLP - place holder in case we want to make this
     # depend on other data and want to combine it within the function
-    TFP = target_log_prob_fn
+    target_log_prob = target_log_prob_fn
 
     # starting point of the MCMC scheme
     def bootstrap_result(initial_state_tuple):
@@ -560,10 +560,10 @@ def random_walk_metropolis_hastings_baseline(
             blocks of inference
         """
         kernel_results = RWMHResult(
-            is_accepted=tf.ones_like(TFP(
+            is_accepted=tf.ones_like(target_log_prob(
                 *initial_state_tuple), dtype=tf.bool),
             current_state=initial_state_tuple,
-            current_state_log_prob=TFP(*initial_state_tuple)
+            current_state_log_prob=target_log_prob(*initial_state_tuple)
         )
         return ParameterTuple(kernel_results,
                               kernel_results,
@@ -635,7 +635,7 @@ def random_walk_metropolis_hastings_baseline(
 
             #########
             # Compute log accept ratio
-            next_target_log_prob = TFP(
+            next_target_log_prob = target_log_prob(
                 *next_complete_state)
 
             log_accept_ratio = next_target_log_prob - \
@@ -679,15 +679,15 @@ def random_walk_metropolis_hastings_baseline(
         lambda x: tf.TensorArray(dtype=x.dtype, size=num_iter),
         bootstrap_result(initial_state_tuple))
 
-    def cond(ii,
-             current_state,
-             previous_kernel_result,
-             parameter_samples,
-             mcmc_results,
-             seed):
-        return ii < num_iter
+    def cond(iterator,
+             _2,
+             _3,
+             _4,
+             _5,
+             _6):
+        return iterator < num_iter
 
-    def body(ii,
+    def body(iterator,
              current_state,
              previous_kernel_result,
              parameter_samples,
@@ -700,13 +700,14 @@ def random_walk_metropolis_hastings_baseline(
             previous_kernel_result=previous_kernel_result, seed=this_seed)
 
         # Track the outcome - CHAIN STATE
-        parameter_samples = tf.nest.map_structure(lambda x, a: a.write(ii, x),
-                                                  next_state, parameter_samples)
+        parameter_samples = tf.nest.map_structure(
+            lambda x, a: a.write(iterator, x),
+            next_state, parameter_samples)
         # # Track the outcome - KERNEL STATE(S)
-        mcmc_results = tf.nest.map_structure(lambda x, a: a.write(ii, x),
+        mcmc_results = tf.nest.map_structure(lambda x, a: a.write(iterator, x),
                                              next_kernel_result, mcmc_results)
 
-        return (ii + 1,
+        return (iterator + 1,
                 next_state,
                 next_kernel_result,
                 parameter_samples,
