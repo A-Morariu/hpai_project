@@ -549,7 +549,7 @@ def random_walk_metropolis_hastings_baseline(
 
     # starting point of the MCMC scheme
     def bootstrap_result(initial_state_tuple):
-        """_summary_
+        """Initialize the kernel trackers
 
         Args:
             initial_state_tuple (ParameterTuple): inital values for 
@@ -570,6 +570,22 @@ def random_walk_metropolis_hastings_baseline(
                               kernel_results)
 
     def one_step(current_state, previous_kernel_result, seed):
+        """One step of the MCMC algorithm 
+
+        Args:
+            current_state (ParameterTuple): current value for each 
+            block of inference
+            previous_kernel_result (ParameterTuple): outcome of 
+            previous kernel containing cached information from 
+            the previous iteration
+            seed (int): PRNG seed
+
+        Returns:
+            current_state (ParameterTuple): new values for the 
+            (entire) chain
+            kernel_results (ParameterTuple): cached values of the
+            intermediate kernel values
+        """
         # pick up most recent update log prob
         seeds = tfp.random.split_seed(seed, n=len(
             current_state._fields), salt="one_step")
@@ -579,17 +595,21 @@ def random_walk_metropolis_hastings_baseline(
         # iterate over each of the blocks we want to update
         intermediate_kernel_results = []
 
-        # TO DO -- Eliminate the for loop over the current state by creating
-        # a namedtuple over which maps each field to it's own one_step fn. Each one_step
-        # fn instantiates its own proposal fn. Parameters come from a namedtuple over
-        # the same fields - i.e. create a fn to *make* a proposal (closure over the
-        # variance with the current state providing the mean). End goal is to iterate
-        # over a namedtuple fields with signatures ([current_partial_state], [partial_target_log_prob],
+        # TO DO -- Eliminate the for loop over the current state
+        # by creating a namedtuple over which maps each field to
+        # it's own one_step fn. Each one_step fn instantiates its
+        # own proposal fn. Parameters come from a namedtuple over
+        # the same fields - i.e. create a fn to *make* a proposal
+        # (closure over the variance with the current state
+        # providing the mean). End goal is to iterate over a
+        # namedtuple fields with signatures
+        # ([current_partial_state], [partial_target_log_prob],
         # [proposal_fn]).
 
-        # NEXT TO DO -- unpack the namedtuple of parameters to be arguments
-        # for the target_log_prob and take advantage of the partial evaluation fn. We
-        # want to make a wrapper one_step fn that acts as a pipe for all the kernels
+        # NEXT TO DO -- unpack the namedtuple of parameters to be
+        # arguments for the target_log_prob and take advantage of
+        # the partial evaluation fn. We want to make a wrapper
+        # one_step fn that acts as a pipe for all the kernels
         # that need to be evaluated in one step of the MCMC
 
         # IDEA -- kernels can be stacked using tf.scan?
