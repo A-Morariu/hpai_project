@@ -15,7 +15,7 @@ DTYPE = tf.float64
 
 tfd = tfp.distributions
 
-tf_map = tf.nest.map_structure
+tf_map = tf_map
 
 # User defined types
 ParameterTuple = collections.namedtuple(
@@ -540,7 +540,7 @@ def random_walk_metropolis_hastings_baseline(
 
     # Instantiate proposal distributions - a ParameterTuple containing
     # fn's corresponding to the proposal of each block of inference
-    proposal_distributions = tf.nest.map_structure(
+    proposal_distributions = tf_map(
         lambda x: generate_gaussian_proposal(x), proposal_sigma_tuple)
 
     # Instantiate the TLP - place holder in case we want to make this
@@ -670,12 +670,12 @@ def random_walk_metropolis_hastings_baseline(
 
     # Chain values - a ParameterTuple of TensorArrays which expand at each
     # iteration with the next value from the one_step fn
-    parameter_samples = tf.nest.map_structure(
+    parameter_samples = tf_map(
         lambda x: tf.TensorArray(dtype=x.dtype, size=num_iter),
         initial_state_tuple)
     # One step result tracker - a ParameterTuple of RMWHResult tuples tracking each
     # sub-kernel outcome (instances of the intermediate_kernel_results)
-    mcmc_results = tf.nest.map_structure(
+    mcmc_results = tf_map(
         lambda x: tf.TensorArray(dtype=x.dtype, size=num_iter),
         bootstrap_result(initial_state_tuple))
 
@@ -700,12 +700,12 @@ def random_walk_metropolis_hastings_baseline(
             previous_kernel_result=previous_kernel_result, seed=this_seed)
 
         # Track the outcome - CHAIN STATE
-        parameter_samples = tf.nest.map_structure(
+        parameter_samples = tf_map(
             lambda x, a: a.write(iterator, x),
             next_state, parameter_samples)
         # # Track the outcome - KERNEL STATE(S)
-        mcmc_results = tf.nest.map_structure(lambda x, a: a.write(iterator, x),
-                                             next_kernel_result, mcmc_results)
+        mcmc_results = tf_map(lambda x, a: a.write(iterator, x),
+                              next_kernel_result, mcmc_results)
 
         return (iterator + 1,
                 next_state,
@@ -730,9 +730,84 @@ def random_walk_metropolis_hastings_baseline(
                                     seed))
 
     # Formatting
-    parameter_samples = tf.nest.map_structure(
+    parameter_samples = tf_map(
         lambda x: x.stack(), parameter_samples)
 
-    mcmc_results = tf.nest.map_structure(lambda x: x.stack(),  mcmc_results)
+    mcmc_results = tf_map(lambda x: x.stack(),  mcmc_results)
 
     return parameter_samples, mcmc_results
+
+
+def random_walk_metropolis_hastings_kernel(target_log_prob_fn, proposal_scale):
+    """Runs one step of the Metropolis-Hastings algorithm.
+    Proposal distribution is symmetric meaning there is
+    no need for any adjustments to the log-acceptance ratio
+
+    Args:
+        target_log_prob_fn (fn): a *partial* evaluation of the
+        model target log prob function which moves *only* the
+        parameters of interest of the inference block 
+        proposal_scale (float64): vector of the proposal
+        distribution scales for the parameters of interest
+        of the inference block
+
+    Returns:
+        current_state (float64): state of the chain after the step
+        has been run
+        kernel_result (RWMHResult): tracing tuple of information
+        from the algorithm
+
+    """
+    proposal_distribution = generate_gaussian_proposal(scale=proposal_scale)
+
+    def random_walk_metropolis_hastings_one_step(
+            current_state, previous_kernel_result, seed):
+        """_summary_
+
+        Args:
+            current_state (ParameterTuple): _description_
+            previous_kernel_result (RWMHResult): _description_
+            seed (int): PRNG seed
+
+        Returns:
+            _type_: _description_
+        """
+        # Step 1: Seed handling - Can we do this outside?
+        proposal_seed, accept_seed = tfp.random.split_seed(
+            seed, n=2, salt="RWMHKernel")
+
+        # Step 2: Propose next step
+        next_state = proposal_distribution(current_state=current_state,
+                                           seed=proposal_seed)
+
+        # Step 3: Evaluate the target-log-prob of the proposal
+        # IMPORTANT: inputted target_log_prob_fn is a partial evaluation
+        # of the model target_log_prob in the main function
+
+        next_target_log_prob = target_log_prob_fn(next_state)
+
+        # Step 4: Compute log-accept ratio
+        log_accept_ratio = next_target_log_prob - \
+            previous_kernel_result.current_state_log_prob
+
+        # Step 5: Check accept/reject
+        log_uniform = tf.math.log(tfp.distributions.Uniform(
+            high=tf.constant(1., dtype=DTYPE)).sample(seed=accept_seed))
+
+        is_accepted = log_uniform < log_accept_ratio
+
+        # Step 6: Update the current_state and kernel_results
+        current_state = tf.cond(
+            is_accepted, lambda: next_state, lambda: current_state)
+        current_state_log_prob = tf.cond(
+            is_accepted, lambda: next_target_log_prob,
+            lambda: current_state_log_prob)
+
+        kernel_results = RWMHResult(
+            is_accepted=is_accepted,
+            current_state=current_state,
+            current_state_log_prob=current_state_log_prob
+        )
+        return current_state, kernel_results
+
+    return random_walk_metropolis_hastings_one_step
