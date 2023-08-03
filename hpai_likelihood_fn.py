@@ -24,22 +24,30 @@ ParameterTuple = collections.namedtuple(
 RWMHResult = collections.namedtuple(
     'RWMHResult', 'is_accepted current_state current_state_log_prob')
 
-# Import data - To do
-farm_locations = pd.read_csv('data_files/farm_locations.csv')
+# Section 1 - Likelihood specification
+# This section is dedicated to outlining the likelihood function
+# of the epidemic model we are using. All transitions and events
+# are highlighted in the mathematical equation. From an implementation
+# perspective, we take a functional programming approach to allocate
+# intermediary tasks to a python function call. There are two subsections
+# which split up the code: the helper function and the target-log-prob
+# creation. The helper functions act on data directly and modify objects
+# in memory. The target-log-prob function also operates on data (objects)
+# but uses closures over it in order to return functions that depend on
+# model parameters. This allows them to be used as targets of inference
+# algorithms in section 2.
 
-# Compute likelihood
-
-# Helper function
+# Helper functions
 
 
 def pairwise_distance(location_data):
     """Compute pairwise distance matrix between farms
 
     Args:
-        farm_locations_data (DataFrame): Lat-Long coordinates of farms
+        farm_locations_data (float64): Lat-Long coordinates of farms
 
     Returns:
-        tensor: tensor of Euclidean distances between entities
+        float64: tensor of Euclidean distances between entities
                 Dim = len(farm_location_data)
     """
     return tf.convert_to_tensor(
@@ -157,9 +165,9 @@ def generate_infectious_duration(infection_times, removal_times):
     return tf.math.subtract(x=removal_times,
                             y=infection_times)
 
-##########################
+# Likelihood components
+
 # Regression Component
-##########################
 
 
 def generate_regression_pressure(characteristic_data=None):
@@ -185,9 +193,7 @@ def generate_regression_pressure(characteristic_data=None):
 
     return compute_regression
 
-##########################
 # Infectious pressure
-##########################
 
 
 def generate_pairwise_hazard_fn(location_data, characteristic_data):
@@ -216,9 +222,7 @@ def generate_pairwise_hazard_fn(location_data, characteristic_data):
 
     return compute_hazard
 
-############
 # Removal fn
-############
 
 
 def generate_removal_fn(infection_time, removal_time):
@@ -247,10 +251,6 @@ def generate_removal_fn(infection_time, removal_time):
         return tfp.distributions.Exponential(
             rate=parameters).log_prob(time_diff)
     return removal_fn
-
-##########################
-# Likelihood
-##########################
 
 # block 1 - event rate
 # math: [log (WAIFW cdot (H_{I,I}) cdot 1v )] cdot 1v
@@ -389,9 +389,7 @@ def log_ll(hazard_rate_function, known_event_times):
         return block1 + block2 + block3
     return log_ll_eval
 
-##########################
-# Priors
-##########################
+# Priors specification
 
 
 def prior_distributions_block(initial_values_tuple):
@@ -443,9 +441,7 @@ def prior_distributions_block(initial_values_tuple):
         return reg_block + spatial_block + removal_block
     return prior_eval
 
-##########################
 # Target log prob
-##########################
 
 
 def target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
@@ -458,8 +454,26 @@ def target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
 
     Returns:
         float64: evaluation of the target log prob
+
+    Notes: 
+    The inner fn operates on an unpacked version of the ParameterTuple
+    in order to be able to take advantage of partial function 
+    evaluations in the functools package. 
     """
     # initialize the two parts
-    def target_log_prob_eval(parameters_tuple):
+    def target_log_prob_eval(regression_param, spatial_param, removal_param):
+        # pack up the parameters (lazy way so we don't need to
+        # change the structure of the other functions above)
+        parameters_tuple = ParameterTuple(regression_param,
+                                          spatial_param,
+                                          removal_param)
+
         return log_likelihood_fn(parameters_tuple) + prior_dist_fn(parameters_tuple)
     return target_log_prob_eval
+
+# Section 2 - Probabilistic inference
+# This section is dedicated to performing Bayesian infernce given
+# a target log prob function. Several MCMC kernels are specified
+# with the goal that they work on the same target log prob function.
+# Proposal distributions for each are created kernel is created
+# based on the shapes initial values of the parameters.
