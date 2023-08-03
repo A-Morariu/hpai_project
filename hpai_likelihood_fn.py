@@ -444,7 +444,7 @@ def prior_distributions_block(initial_values_tuple):
 # Target log prob
 
 
-def target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
+def generate_target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
     """Combine log-likelihood and prior distributions to create the 
     target log prob fn used in inference
 
@@ -460,14 +460,12 @@ def target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
     in order to be able to take advantage of partial function 
     evaluations in the functools package. 
     """
-    # initialize the two parts
     def target_log_prob_eval(regression_param, spatial_param, removal_param):
         # pack up the parameters (lazy way so we don't need to
         # change the structure of the other functions above)
         parameters_tuple = ParameterTuple(regression_param,
                                           spatial_param,
                                           removal_param)
-
         return log_likelihood_fn(parameters_tuple) + prior_dist_fn(parameters_tuple)
     return target_log_prob_eval
 
@@ -477,3 +475,243 @@ def target_log_prob_fn(log_likelihood_fn, prior_dist_fn):
 # with the goal that they work on the same target log prob function.
 # Proposal distributions for each are created kernel is created
 # based on the shapes initial values of the parameters.
+
+# Proposal distributions
+
+
+def generate_gaussian_proposal(scale):
+    """Instantiate a Gaussian proposal for an MCMC kernel 
+
+    Args:
+        scale (float64): the scale of the proposal distribution. 
+        Must contain only positive values. 
+
+    Returns:
+        fn: proposal function with a fixed scale parameter. The
+        function takes in the current chain state and a seed, 
+        and returns a sample of size 1 matching the current 
+        state dimensions
+    """
+
+    def gaussian_proposal(current_state, seed):
+        """Propose next state in an MCMC chain given a current
+        state and a seed 
+
+        Args:
+            current_state (float64): vector of values of the 
+            current chain state
+            seed (int): PRNG seed
+
+        Returns:
+            float64: suggested next state for the chain
+        """
+        loc = current_state
+        isotropic_normal = tfp.distributions.Normal(
+            loc=loc, scale=scale)
+        return isotropic_normal.sample(seed=seed)
+    return gaussian_proposal
+
+
+@tf.function(jit_compile=True)
+def random_walk_metropolis_hastings_baseline(
+        target_log_prob_fn, initial_state_tuple, proposal_sigma_tuple,
+        num_iter=15, seed=None):
+    """Baseline inference scheme for an SIR model. Three kernels are 
+    combined back to back to back by iterating over partial states of
+    the target log prob function. 
+
+    Args:
+        target_log_prob_fn (fn): target function of the inference algorithm
+        initial_state_tuple (ParameterTuple): blocks of inference as 
+        specified by the parameters to be targeted by each kernel 
+        proposal_sigma_tuple (ParameterTuple): parameters of the proposal 
+        distributions of each of the blocks of inference 
+        num_iter (int, optional): Number of iterations to run the MCMC 
+        algo. Defaults to 15.
+        seed (int, optional): PRNG seed. Defaults to None.
+
+    Returns:
+        parameter_samples (ParameterTuple): MCMC chain for each model parameter
+        mcmc_results (ParameterTuple): kernel result for each of model parameter
+    """
+    # seed handling
+    seed = tfp.random.sanitize_seed(
+        seed, salt="RandomWalkMetropolisHastings_baseline")
+
+    # Instantiate proposal distributions - a ParameterTuple containing
+    # fn's corresponding to the proposal of each block of inference
+    proposal_distributions = tf.nest.map_structure(
+        lambda x: generate_gaussian_proposal(x), proposal_sigma_tuple)
+
+    # Instantiate the TLP - place holder in case we want to make this
+    # depend on other data and want to combine it within the function
+    TFP = target_log_prob_fn
+
+    # starting point of the MCMC scheme
+    def bootstrap_result(initial_state_tuple):
+        """_summary_
+
+        Args:
+            initial_state_tuple (ParameterTuple): inital values for 
+            the chains
+
+        Returns:
+            ParameterTuple: an instance of the kernel for each of the 
+            blocks of inference
+        """
+        kernel_results = RWMHResult(
+            is_accepted=tf.ones_like(TFP(
+                *initial_state_tuple), dtype=tf.bool),
+            current_state=initial_state_tuple,
+            current_state_log_prob=TFP(*initial_state_tuple)
+        )
+        return ParameterTuple(kernel_results,
+                              kernel_results,
+                              kernel_results)
+
+    def one_step(current_state, previous_kernel_result, seed):
+        # pick up most recent update log prob
+        seeds = tfp.random.split_seed(seed, n=len(
+            current_state._fields), salt="one_step")
+
+        current_state_log_prob = previous_kernel_result[-1].current_state_log_prob
+
+        # iterate over each of the blocks we want to update
+        intermediate_kernel_results = []
+
+        # TO DO -- Eliminate the for loop over the current state by creating
+        # a namedtuple over which maps each field to it's own one_step fn. Each one_step
+        # fn instantiates its own proposal fn. Parameters come from a namedtuple over
+        # the same fields - i.e. create a fn to *make* a proposal (closure over the
+        # variance with the current state providing the mean). End goal is to iterate
+        # over a namedtuple fields with signatures ([current_partial_state], [partial_target_log_prob],
+        # [proposal_fn]).
+
+        # NEXT TO DO -- unpack the namedtuple of parameters to be arguments
+        # for the target_log_prob and take advantage of the partial evaluation fn. We
+        # want to make a wrapper one_step fn that acts as a pipe for all the kernels
+        # that need to be evaluated in one step of the MCMC
+
+        # IDEA -- kernels can be stacked using tf.scan?
+
+        for field, seed in zip(current_state._fields, seeds):
+
+            # seed handling
+            proposal_seed, accept_seed = tfp.random.split_seed(
+                seed, n=2, salt="for_loop")
+
+            # pick up partial state (maps to block to perform inference on)
+            partial_current_state = getattr(current_state, field)
+
+            #########
+            # Propose next step
+            proposal_fn = getattr(proposal_distributions, field)
+            next_partial_state = proposal_fn(
+                partial_current_state, proposal_seed)
+
+            # overright type - Bad for memory I know
+            next_complete_state = current_state._replace(
+                **{field: next_partial_state})
+
+            #########
+            # Compute log accept ratio
+            next_target_log_prob = TFP(
+                *next_complete_state)
+
+            log_accept_ratio = next_target_log_prob - \
+                current_state_log_prob
+
+            # Accept reject step
+            log_uniform = tf.math.log(tfp.distributions.Uniform(
+                high=tf.constant(1., dtype=DTYPE)).sample(seed=accept_seed))
+
+            is_accepted = log_uniform < log_accept_ratio
+
+            current_state = tf.cond(
+                is_accepted, lambda: next_complete_state, lambda: current_state)
+            current_state_log_prob = tf.cond(
+                is_accepted, lambda: next_target_log_prob,
+                lambda: current_state_log_prob)
+
+            new_kernel_results = RWMHResult(
+                is_accepted=is_accepted,
+                current_state=current_state,
+                current_state_log_prob=current_state_log_prob
+            )
+            intermediate_kernel_results.append(new_kernel_results)
+        # this only keeps track of accept/reject of last block
+        # new_kernel_results
+
+        return current_state, ParameterTuple(*intermediate_kernel_results)
+
+    # Perform sampling - use the tf.while_loop fn and style
+    # Require: body fn and cond fn (i.e. perform body while cond is true)
+    # Write the results to the following accumulators
+
+    # Chain values - a ParameterTuple of TensorArrays which expand at each
+    # iteration with the next value from the one_step fn
+    parameter_samples = tf.nest.map_structure(
+        lambda x: tf.TensorArray(dtype=x.dtype, size=num_iter),
+        initial_state_tuple)
+    # One step result tracker - a ParameterTuple of RMWHResult tuples tracking each
+    # sub-kernel outcome (instances of the intermediate_kernel_results)
+    mcmc_results = tf.nest.map_structure(
+        lambda x: tf.TensorArray(dtype=x.dtype, size=num_iter),
+        bootstrap_result(initial_state_tuple))
+
+    def cond(ii,
+             current_state,
+             previous_kernel_result,
+             parameter_samples,
+             mcmc_results,
+             seed):
+        return ii < num_iter
+
+    def body(ii,
+             current_state,
+             previous_kernel_result,
+             parameter_samples,
+             mcmc_results,
+             seed):
+        # Perform one step of in the chain
+        this_seed, next_seed = tfp.random.split_seed(seed, n=2, salt="body")
+        next_state, next_kernel_result = one_step(
+            current_state=current_state,
+            previous_kernel_result=previous_kernel_result, seed=this_seed)
+
+        # Track the outcome - CHAIN STATE
+        parameter_samples = tf.nest.map_structure(lambda x, a: a.write(ii, x),
+                                                  next_state, parameter_samples)
+        # # Track the outcome - KERNEL STATE(S)
+        mcmc_results = tf.nest.map_structure(lambda x, a: a.write(ii, x),
+                                             next_kernel_result, mcmc_results)
+
+        return (ii + 1,
+                next_state,
+                next_kernel_result,
+                parameter_samples,
+                mcmc_results,
+                next_seed)
+
+    (_1,
+     _2,
+     _3,
+     parameter_samples,
+     mcmc_results,
+     _4) = tf.while_loop(cond=cond,
+                         body=body,
+                         loop_vars=(0,
+                                    initial_state_tuple,
+                                    bootstrap_result(
+                                        initial_state_tuple),
+                                    parameter_samples,
+                                    mcmc_results,
+                                    seed))
+
+    # Formatting
+    parameter_samples = tf.nest.map_structure(
+        lambda x: x.stack(), parameter_samples)
+
+    mcmc_results = tf.nest.map_structure(lambda x: x.stack(),  mcmc_results)
+
+    return parameter_samples, mcmc_results
