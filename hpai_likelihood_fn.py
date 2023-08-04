@@ -15,7 +15,7 @@ DTYPE = tf.float64
 
 tfd = tfp.distributions
 
-tf_map = tf_map
+tf_map = tf.nest.map_structure
 
 # User defined types
 ParameterTuple = collections.namedtuple(
@@ -697,7 +697,9 @@ def random_walk_metropolis_hastings_baseline(
         this_seed, next_seed = tfp.random.split_seed(seed, n=2, salt="body")
         next_state, next_kernel_result = one_step(
             current_state=current_state,
-            previous_kernel_result=previous_kernel_result, seed=this_seed)
+            previous_kernel_result=previous_kernel_result,
+            seed=this_seed
+        )
 
         # Track the outcome - CHAIN STATE
         parameter_samples = tf_map(
