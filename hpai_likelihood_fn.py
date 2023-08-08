@@ -705,7 +705,7 @@ def random_walk_metropolis_hastings_baseline(
         parameter_samples = tf_map(
             lambda x, a: a.write(iterator, x),
             next_state, parameter_samples)
-        # # Track the outcome - KERNEL STATE(S)
+        # Track the outcome - KERNEL STATE(S)
         mcmc_results = tf_map(lambda x, a: a.write(iterator, x),
                               next_kernel_result, mcmc_results)
 
