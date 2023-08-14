@@ -69,7 +69,6 @@ def generate_gaussian_proposal(scale):
         and returns a sample of size 1 matching the current 
         state dimensions
     """
-
     def gaussian_proposal(current_state, seed):
         """Propose next state in an MCMC chain given a current
         state and a seed 
@@ -86,7 +85,32 @@ def generate_gaussian_proposal(scale):
         isotropic_normal = tfp.distributions.Normal(
             loc=loc, scale=scale)
         return isotropic_normal.sample(seed=seed)
+
     return gaussian_proposal
+
+
+def generic_proposal_distribution(distribution_parameters, is_symmetric=False):
+
+    # initialize the distribution
+    proposal_distribution = tfp.distributions.gamma(
+        concentration=distribution_parameters[0],       # alpha
+        rate=distribution_parameters[1])                # beta
+
+    def proposed_value(current_state, seed):
+        return proposal_distribution.sample(
+            sample_shape=tf.shape(current_state),
+            seed=seed)
+
+    def log_acceptance_correction(current_state, proposed_state):
+        # q(x | x')
+        backward_correction = 0
+
+        # q(x' | x)
+        forward_correction = 0
+
+        return backward_correction - forward_correction
+
+    return proposed_value, log_acceptance_correction
 
 # inference algo
 
