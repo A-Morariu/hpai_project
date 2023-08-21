@@ -89,10 +89,19 @@ def generate_gaussian_proposal(scale):
     return gaussian_proposal
 
 
-def generic_proposal_distribution(distribution_parameters, is_symmetric=False):
+def generate_gamma_proposal(distribution_parameters):
+    # indepedence sampler?
+    """_summary_
 
+    Args:
+        distribution_parameters (float64): list of parameters for the gamma distirbution, namely the [concentration, rate] values
+
+    Returns:
+        proposed_value (f ): function which proposed the next step in the chain
+        log_acceptance_correction (fn): function which outputs the acceptance ratio correction
+    """
     # initialize the distribution
-    proposal_distribution = tfp.distributions.gamma(
+    proposal_distribution = tfp.distributions.Gamma(
         concentration=distribution_parameters[0],       # alpha
         rate=distribution_parameters[1])                # beta
 
@@ -103,10 +112,12 @@ def generic_proposal_distribution(distribution_parameters, is_symmetric=False):
 
     def log_acceptance_correction(current_state, proposed_state):
         # q(x | x')
-        backward_correction = 0
+        backward_correction = proposal_distribution.log_prob(
+            value=current_state, name='backward_correction')
 
         # q(x' | x)
-        forward_correction = 0
+        forward_correction = proposal_distribution.log_prob(
+            value=proposed_state, name='forward_correction')
 
         return backward_correction - forward_correction
 
