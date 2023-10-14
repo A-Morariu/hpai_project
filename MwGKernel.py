@@ -143,7 +143,7 @@ def generate_gaussian_proposal(*, proposal_scale):
     """
     proposal_scale = tf.cast(proposal_scale, DTYPE)
 
-    def gaussian_proposal_fn(*, position: tuple, seed):
+    def gaussian_proposal_fn(*, position, seed):
         """Propose next state in an MCMC chain given a current
         state and a seed 
 
@@ -170,6 +170,7 @@ def generate_gaussian_proposal(*, proposal_scale):
                                       proposal_scale if tf.size(proposal_scale) > 1 else tf.repeat(proposal_scale, len(target_variables)),
                                       seeds))
         ]
+        print(f'Proposal: {proposal}')
         if not isinstance(position, (tuple, list)):
             return proposal[0]
 
